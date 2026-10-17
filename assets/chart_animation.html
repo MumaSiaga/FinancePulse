@@ -1,0 +1,82 @@
+<script>
+(() => {
+    window.pulseChartAnimation?.disconnect();
+    const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const drawn = new WeakMap();
+    const running = new Set();
+    let frame;
+
+    function draw(chart) {
+        if (motion.matches) return;
+        const bounds = chart.getBoundingClientRect();
+        if (!bounds.width || !bounds.height) return;
+        const paths = chart.querySelectorAll(
+            '.scatterlayer path.js-line, .barlayer .point path, .pielayer .slice path.surface'
+        );
+        paths.forEach((path, index) => {
+            const shape = path.getAttribute('d');
+            if (!shape || drawn.get(path) === shape) return;
+            drawn.set(path, shape);
+            let frames;
+            if (path.matches('.js-line')) {
+                const length = path.getTotalLength();
+                if (!length) return;
+                frames = [
+                    { strokeDasharray: `${length} ${length}`, strokeDashoffset: length },
+                    { strokeDasharray: `${length} ${length}`, strokeDashoffset: 0 }
+                ];
+            } else if (path.closest('.barlayer')) {
+                const horizontal = path.closest('.trace')?.__data__?.[0]?.trace?.orientation === 'h';
+                frames = [
+                    { clipPath: horizontal ? 'inset(0 100% 0 0)' : 'inset(100% 0 0 0)' },
+                    { clipPath: 'inset(0 0 0 0)' }
+                ];
+            } else {
+                frames = [{ opacity: 0 }, { opacity: 1 }];
+            }
+            const animation = path.animate(frames, {
+                duration: path.matches('.js-line') ? 1800 : 1000,
+                delay: Math.min(index * 70, 420),
+                easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+                fill: 'backwards'
+            });
+            running.add(animation);
+            animation.finished.catch(() => {}).finally(() => running.delete(animation));
+        });
+    }
+
+    const visible = new IntersectionObserver(entries => {
+        entries.forEach(entry => { if (entry.isIntersecting) draw(entry.target); });
+    }, { threshold: 0.1 });
+    const charts = new WeakSet();
+    function scan() {
+        document.querySelectorAll('[data-testid="stPlotlyChart"]').forEach(chart => {
+            if (!charts.has(chart)) {
+                charts.add(chart);
+                visible.observe(chart);
+            }
+            const bounds = chart.getBoundingClientRect();
+            if (bounds.top < window.innerHeight && bounds.bottom > 0) draw(chart);
+        });
+    }
+    const observer = new MutationObserver(() => {
+        cancelAnimationFrame(frame);
+        frame = requestAnimationFrame(scan);
+    });
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['d'] });
+    const stopMotion = () => {
+        if (motion.matches) running.forEach(animation => animation.cancel());
+    };
+    motion.addEventListener('change', stopMotion);
+    window.pulseChartAnimation = {
+        disconnect() {
+            observer.disconnect();
+            visible.disconnect();
+            cancelAnimationFrame(frame);
+            running.forEach(animation => animation.cancel());
+            motion.removeEventListener('change', stopMotion);
+        }
+    };
+    scan();
+})();
+</script>
